@@ -23,8 +23,19 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     # PyPI trusted publishing (OIDC) — no API tokens needed.
-    # The "pypi" environment name must match the trusted publisher
-    # configuration on https://pypi.org/manage/project/taphome-sdk/settings/publishing/
+    #
+    # Before the FIRST release, a matching (pending) trusted publisher must
+    # exist on PyPI, otherwise the upload fails with
+    # "400 Non-user identities cannot create new projects".
+    # Register it at https://pypi.org/manage/account/publishing/ with:
+    #   PyPI Project Name: taphome-sdk
+    #   Owner:             martindybal
+    #   Repository name:   taphome-sdk
+    #   Workflow name:     release.yml
+    #   Environment name:  pypi
+    # These must match the `environment` name below and the project `name`
+    # in pyproject.toml. Manage it afterwards at
+    # https://pypi.org/manage/project/taphome-sdk/settings/publishing/
     environment:
       name: pypi
       url: https://pypi.org/p/taphome-sdk

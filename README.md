@@ -65,6 +65,23 @@ mypy
 
 ## Releasing
 
+Before the **first** release, register a
+[pending trusted publisher](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/)
+on PyPI so the workflow is allowed to create the project. On
+<https://pypi.org/manage/account/publishing/> add a *pending publisher* whose
+fields exactly match this repository and workflow, otherwise PyPI rejects the
+upload with `400 Non-user identities cannot create new projects`:
+
+| Field           | Value               |
+| --------------- | ------------------- |
+| PyPI Project Name | `taphome-sdk`     |
+| Owner           | `martindybal`       |
+| Repository name | `taphome-sdk`       |
+| Workflow name   | `release.yml`       |
+| Environment name| `pypi`              |
+
+Then, for each release:
+
 1. Bump `version` in `pyproject.toml` and update `CHANGELOG.md`.
 2. Create a GitHub release with tag `v<version>` (e.g. `v1.0.0`).
 3. The `Release to PyPI` workflow builds and publishes the package via
