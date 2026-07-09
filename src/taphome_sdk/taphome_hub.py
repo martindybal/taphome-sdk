@@ -1,6 +1,7 @@
 """TapHome Hub handles communication with TapHome Core."""
 
 from asyncio import Task
+from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 import logging
@@ -14,7 +15,7 @@ from .device_bidirectional import BidirectionalDevice
 from .device_digital_output import DigitalOutputDevice
 from .device_factory import DeviceFactory
 from .device_generic_output_adapter import OutputCapableDevice
-from .exceptions import TapHomeConnectionError
+from .exceptions import TapHomeAuthError, TapHomeConnectionError, TapHomeError
 from .helpers import set_interval_async
 from .observable import ObservableValue
 from .taphome_api import (
@@ -34,12 +35,13 @@ class HubConnectionState(Enum):
     DISCONNECTED = "disconnected"
     CONNECTED = "connected"
     FAILED = "failed"
+    AUTH_FAILED = "auth_failed"
 
 
-DeviceT = TypeVar("DeviceT", bound=Device)
+DeviceT = TypeVar("DeviceT", bound=Device[Any])
 
 
-class DeviceNotExposedError(Exception):
+class DeviceNotExposedError(TapHomeError):
     """Device is not exposed to TapHome API."""
 
     def __init__(self, device_id: int) -> None:
@@ -50,7 +52,7 @@ class DeviceNotExposedError(Exception):
         )
 
 
-class DeviceTypeError(Exception):
+class DeviceTypeError(TapHomeError):
     """Unexpected device type returned for a TapHome device."""
 
     def __init__(
@@ -81,6 +83,10 @@ class TapHomeHub:
     last_update_success_time: ObservableValue[datetime | None]
     connection_type: ObservableValue[ApiConnectionType]
     connection_state: ObservableValue[HubConnectionState]
+    # Device ids seen in incoming values (webhook or poll) that are not yet
+    # registered. Exposing a device in the TapHome app makes it show up here,
+    # so callers can react instead of polling discovery on a timer.
+    new_device_ids: ObservableValue[frozenset[int]]
 
     def __init__(
         self,
@@ -102,8 +108,9 @@ class TapHomeHub:
         )
         self.connection_type = ObservableValue(connection_type)
 
-        self.devices: dict[int, Device] = {}
-        self.periodic_refresh_task: Task | None = None
+        self.new_device_ids = ObservableValue(frozenset[int]())
+        self.devices: dict[int, Device[Any]] = {}
+        self.periodic_refresh_task: Task[None] | None = None
         self._connection_type_changed_handler = lambda _, __: (
             self._schedule_periodic_refresh()
         )
@@ -168,6 +175,38 @@ class TapHomeHub:
             _LOGGER.error("Failed to connect to TapHome API: %s", e)
             raise
 
+    async def async_discover_new_devices(self) -> set[int]:
+        """Re-run discovery and register devices exposed since the connect.
+
+        Returns the ids of every device the API currently exposes. Devices
+        that disappeared from the API are kept in ``devices`` so existing
+        references stay valid.
+        """
+        discovery = await self.api.async_discovery_devices()
+        if discovery is None:
+            self._empty_response()
+
+        new_ids = set(discovery.devices) - set(self.devices)
+        if new_ids:
+            values = await self.api.async_get_all_devices_values()
+            if values is None:
+                self._empty_response()
+            for device_id in new_ids:
+                device_values = values.devices.get(device_id)
+                device = DeviceFactory.create_device(
+                    self.api,
+                    self.connection_type,
+                    discovery.devices[device_id],
+                    device_values.values if device_values is not None else {},
+                )
+                if device is not None:
+                    self.devices[device_id] = device
+
+        # Drop ids that are now registered; anything left is still unknown and
+        # will re-fire so the caller can try again.
+        self.new_device_ids.value = self.new_device_ids.value - self.devices.keys()
+        return set(discovery.devices)
+
     def disconnect(self) -> None:
         """Stop periodic polling and mark the hub as disconnected."""
         self.connection_type.changed -= self._connection_type_changed_handler
@@ -211,11 +250,25 @@ class TapHomeHub:
 
             self._update_devices_values(values.devices)
             self.connection_state.value = HubConnectionState.CONNECTED
+        except TapHomeAuthError as error:
+            if self.connection_state.value is not HubConnectionState.AUTH_FAILED:
+                _LOGGER.warning("TapHome API rejected the token: %s", error)
+            self.connection_state.value = HubConnectionState.AUTH_FAILED
         except Exception:
-            _LOGGER.exception(
-                "Failed to update TapHome data. Last successful update: %s",
-                self.last_update_success_time.value,
-            )
+            # Log the first failure loudly; while the hub stays unreachable
+            # every further poll failure is only interesting for debugging.
+            if self.connection_state.value is HubConnectionState.CONNECTED:
+                _LOGGER.warning(
+                    "Failed to update TapHome data. Last successful update: %s",
+                    self.last_update_success_time.value,
+                    exc_info=True,
+                )
+            else:
+                _LOGGER.debug(
+                    "TapHome update keeps failing. Last successful update: %s",
+                    self.last_update_success_time.value,
+                    exc_info=True,
+                )
             self.connection_state.value = HubConnectionState.FAILED
 
     def _empty_response(self) -> NoReturn:
@@ -226,13 +279,25 @@ class TapHomeHub:
             "Please check your connection and try again."
         )
 
-    def _update_devices_values(self, values: dict[int, DeviceValues]):
+    def _update_devices_values(self, values: dict[int, DeviceValues]) -> None:
         for device_id, device_values in values.items():
             device = self.devices.get(device_id)
             if device is not None and device_values is not None:
                 device.state.apply_changes(device_values.values)
 
         self.last_update_success_time.value = datetime.now(UTC)
+        self._track_new_device_ids(values.keys())
+
+    def _track_new_device_ids(self, seen_ids: Iterable[int]) -> None:
+        """Record ids seen in the values that are not registered devices.
+
+        Accumulates across calls (a webhook carries only changed devices) and
+        drops ids once their device is registered, so the value only grows when
+        a genuinely new device appears.
+        """
+        known = self.devices.keys()
+        tracked = (self.new_device_ids.value | set(seen_ids)) - known
+        self.new_device_ids.value = frozenset(tracked)
 
 
 class TapHomeHubFactory:

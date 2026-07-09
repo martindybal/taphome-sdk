@@ -6,12 +6,12 @@ from collections.abc import Generator
 from dataclasses import dataclass
 from enum import Enum
 import logging
-from typing import TypeVar
+from typing import Any, TypeVar
 
 import aiohttp
 from aiohttp import ClientResponse, ClientSession
 
-from .exceptions import TapHomeAuthError, TapHomeConnectionError
+from .exceptions import TapHomeAuthError, TapHomeConnectionError, TapHomeError
 from .helpers import FromDictProtocol
 from .value_type import ValueType
 
@@ -38,7 +38,7 @@ class EnumeratedValue:
     is_enabled: bool
 
     @classmethod
-    def from_dict(cls, data: dict) -> EnumeratedValue:
+    def from_dict(cls, data: dict[str, Any]) -> EnumeratedValue:
         """Create EnumeratedValue instance from dictionary."""
         return cls(value=data["value"], name=data["name"], is_enabled=data["isEnabled"])
 
@@ -54,7 +54,7 @@ class SupportedValue:
     max_value: int | None
 
     @classmethod
-    def from_dict(cls, data: dict) -> SupportedValue:
+    def from_dict(cls, data: dict[str, Any]) -> SupportedValue:
         """Create SupportedValue instance from dictionary."""
         return cls(
             value_type=ValueType(data["valueTypeId"]),
@@ -82,7 +82,7 @@ class DeviceMetadata:
     supported_values: dict[ValueType, SupportedValue]
 
     @classmethod
-    def from_dict(cls, data: dict) -> DeviceMetadata:
+    def from_dict(cls, data: dict[str, Any]) -> DeviceMetadata:
         """Create Device instance from dictionary."""
         supported_values: dict[ValueType, SupportedValue] = {}
         for supported_value in data["supportedValues"]:
@@ -120,7 +120,7 @@ class DeviceValue:
     value: float
 
     @classmethod
-    def from_dict(cls, data: dict) -> DeviceValue:
+    def from_dict(cls, data: dict[str, Any]) -> DeviceValue:
         """Instantiate ``DeviceValue`` from a dictionary."""
         return DeviceValue(
             value_type=ValueType(data["valueTypeId"]), value=data["value"]
@@ -137,10 +137,10 @@ class DeviceValues:
     message: str | None
 
     @classmethod
-    def from_dict(cls, data: dict) -> DeviceValues:
+    def from_dict(cls, data: dict[str, Any]) -> DeviceValues:
         """Instantiate ``DeviceValues`` from a dictionary."""
 
-        def _map_values(data) -> Generator[tuple[ValueType, float]]:
+        def _map_values(data: dict[str, Any]) -> Generator[tuple[ValueType, float]]:
             for value_data in data["values"]:
                 try:
                     device_value = DeviceValue.from_dict(value_data)
@@ -168,7 +168,7 @@ class Location:
     timestamp: int
 
     @classmethod
-    def from_dict(cls, data: dict) -> Location:
+    def from_dict(cls, data: dict[str, Any]) -> Location:
         """Instantiate ``LocationResponse`` from a dictionary."""
         return cls(
             location_id=data["locationId"],
@@ -186,11 +186,11 @@ class DiscoveryResponse:
     timestamp: int
 
     @classmethod
-    def from_dict(cls, data: dict) -> DiscoveryResponse:
+    def from_dict(cls, data: dict[str, Any]) -> DiscoveryResponse:
         """Instantiate ``AllDevicesValues`` from a dictionary."""
 
         def _map_devices(
-            data,
+            data: dict[str, Any],
         ) -> Generator[tuple[int, DeviceMetadata]]:
             for device in data["devices"]:
                 try:
@@ -215,7 +215,7 @@ class DevicesValuesResponse:
     timestamp: int
 
     @classmethod
-    def from_dict(cls, data: dict) -> DevicesValuesResponse:
+    def from_dict(cls, data: dict[str, Any]) -> DevicesValuesResponse:
         """Instantiate ``AllDevicesValues`` from a dictionary."""
         return DevicesValuesResponse(
             devices={
@@ -235,7 +235,7 @@ class ValueChangeResult(Enum):
     FAILED = 3
 
     @staticmethod
-    def from_string(value: str):
+    def from_string(value: str) -> ValueChangeResult:
         """Map string ``value`` to the corresponding enum member."""
         value = value.upper()
         if value == "CHANGED":
@@ -249,14 +249,25 @@ class ValueChangeResult(Enum):
         return ValueChangeResult.FAILED
 
 
-class ValueChangeFailedException(Exception):
+class ValueChangeFailedException(TapHomeError):
     """Raised when a value change was not applied by TapHome."""
 
     def __init__(
-        self, device_id: int, values: dict[ValueType, ValueChangeResult]
+        self, device_id: int, values: dict[ValueType, ValueChangeResult] | None = None
     ) -> None:
-        """Store failing ``device_id`` and ``values`` in the message."""
-        self.message = f"Values {values} failed to change for device {device_id}"
+        """Store failing ``device_id`` and ``values`` in the message.
+
+        ``values`` is None when TapHome returned no usable response at all.
+        """
+        self.device_id = device_id
+        self.values = values
+        if values is None:
+            self.message = (
+                f"TapHome returned no result when changing values"
+                f" for device {device_id}"
+            )
+        else:
+            self.message = f"Values {values} failed to change for device {device_id}"
         super().__init__(self.message)
 
 
@@ -269,7 +280,7 @@ class SetDeviceValueResponse:
     timestamp: int
 
     @classmethod
-    def from_dict(cls, data: dict) -> SetDeviceValueResponse:
+    def from_dict(cls, data: dict[str, Any]) -> SetDeviceValueResponse:
         """Instantiate ``_SetDeviceValueResponse`` from a dictionary."""
         values_changed = {
             ValueType(result["typeId"]): ValueChangeResult.from_string(result["result"])
@@ -314,7 +325,7 @@ class _TapHomeHttpClient:
             raise TapHomeConnectionError(f"GET {endpoint} failed: {error}") from error
 
     async def async_api_post(
-        self, response_class: type[ResponseT], endpoint: str, body: dict
+        self, response_class: type[ResponseT], endpoint: str, body: dict[str, Any]
     ) -> ResponseT | None:
         """Perform POST request on ``endpoint`` with ``body``."""
         request_url = self._get_request_url(endpoint)
@@ -353,7 +364,7 @@ class _TapHomeHttpClient:
             _LOGGER.exception("TapHome request %s failed: %s", operation, json)
             return None
 
-    async def _read_as_json(self, response: ClientResponse):
+    async def _read_as_json(self, response: ClientResponse) -> Any:
         if response.status == 200:
             return await response.json()
 
@@ -365,11 +376,11 @@ class _TapHomeHttpClient:
             f"TapHome API returned HTTP {response.status}: {message}"
         )
 
-    def _get_request_url(self, endpoint: str):
+    def _get_request_url(self, endpoint: str) -> str:
         """Construct request URL for ``endpoint``."""
         return f"{self.api_url}/{endpoint}"
 
-    def _get_authorization_header(self):
+    def _get_authorization_header(self) -> dict[str, str]:
         """Return authorization header for HTTP requests."""
         return {"Authorization": f"TapHome {self.token}"}
 

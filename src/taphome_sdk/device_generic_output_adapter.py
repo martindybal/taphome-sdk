@@ -14,7 +14,7 @@ from .device_digital_output import DigitalOutputDevice, DigitalOutputState
 from .observable import Event
 
 type OutputCapableDevice = (
-    DigitalOutputDevice | AnalogOutputDevice | BidirectionalDevice
+    DigitalOutputDevice[DigitalOutputState] | AnalogOutputDevice | BidirectionalDevice
 )
 
 
@@ -117,11 +117,11 @@ class GenericOutputAdapter:
     @state_changed.setter
     def state_changed(
         self,
-        value: Event,
+        value: Event[GenericOutputState | None, GenericOutputState],
     ) -> None:
         self._state_changed = value
 
-    def _on_device_state_change(self, old_state, current_state) -> None:
+    def _on_device_state_change(self, old_state: Any, current_state: Any) -> None:
         """Handle device state changes."""
         if old_state is not None:
             old_state = self._map_state(old_state)

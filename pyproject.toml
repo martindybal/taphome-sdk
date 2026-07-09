@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "taphome-sdk"
-version = "1.0.0"
+version = "1.1.0"
 description = "Async Python client for the TapHome smart home API"
 readme = "README.md"
 license = "GPL-3.0-or-later"
@@ -58,6 +58,4 @@ force-sort-within-sections = true
 python_version = "3.12"
 packages = ["taphome_sdk"]
 mypy_path = "src"
-check_untyped_defs = true
-warn_unused_ignores = true
-warn_redundant_casts = true
+strict = true

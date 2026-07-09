@@ -9,15 +9,20 @@ from typing import Generic, Self, TypeVar, cast
 from .helpers import EnumT
 from .observable import Event, ObservableValue
 from .operation_mode import OperationMode
+
+# DeviceMetadata and ValueType are re-exported: the device_* modules import
+# them from here.
 from .taphome_api import (
     ApiConnectionType,
-    DeviceMetadata,
     SetDeviceValueResponse,
     TapHomeApi,
     ValueChangeFailedException,
     ValueChangeResult,
 )
-from .value_type import ValueType
+from .taphome_api import (
+    DeviceMetadata as DeviceMetadata,
+)
+from .value_type import ValueType as ValueType
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -65,7 +70,7 @@ class DeviceState:
             )
             self._changed(cast(Self | None, old_state), cast(Self, self))
 
-    def should_update(self, values):
+    def should_update(self, values: dict[ValueType, float]) -> bool:
         """Check if the device state should be updated."""
         return self._device_values != values
 
@@ -77,7 +82,10 @@ class DeviceState:
         """Update state attributes when device values change."""
 
     def get_device_enum_value(
-        self, enum_type: type[EnumT], value_type: ValueType, supress_warning=False
+        self,
+        enum_type: type[EnumT],
+        value_type: ValueType,
+        supress_warning: bool = False,
     ) -> EnumT | None:
         """Return enum value for ``value_type`` or None."""
         value = self.get_device_value(value_type)
@@ -109,7 +117,8 @@ class DeviceState:
     def get_device_value(self, value_type: ValueType) -> float | None:
         """Return value for ``value_type`` if available."""
         value = self._device_values.get(value_type)
-        return value if value != "NaN" else None
+        # The API reports unavailable values as the literal string "NaN".
+        return None if value is None or str(value) == "NaN" else value
 
 
 StateT = TypeVar("StateT", bound=DeviceState)
@@ -167,8 +176,7 @@ class Device(DeviceMetadata, Generic[StateT]):
         values_without_none = {k: v for k, v in values.items() if v is not None}
         result = await self._api.async_set_device_values(self.id, values_without_none)
         if result is None:
-            _LOGGER.error("Failed to set device values for %s", self.id)
-            return
+            raise ValueChangeFailedException(self.id)
         if not self.was_values_changed(result):
             await self._async_reload_values(True)
             raise ValueChangeFailedException(result.device_id, result.values_changed)

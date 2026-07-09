@@ -15,7 +15,7 @@ class PositionState(Enum):
     CLOSING = "closing"
     CLOSED = "closed"
 
-    def __str__(self):
+    def __str__(self) -> str:
         """Return string representation of the position state."""
         return self.value
 

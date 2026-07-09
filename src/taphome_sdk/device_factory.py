@@ -1,6 +1,7 @@
 """Factory for creating TapHome devices."""
 
 import logging
+from typing import Any
 
 from .device import Device, DeviceMetadata, DeviceState, ValueType
 from .device_analog_output import AnalogOutputDevice, AnalogOutputState
@@ -36,7 +37,7 @@ class DeviceFactory:
         connection_type: ObservableValue[ApiConnectionType],
         metadata: DeviceMetadata,
         device_values: dict[ValueType, float],
-    ) -> Device | None:
+    ) -> Device[Any] | None:
         """Create a Device."""
         if metadata.supports_value(ValueType.BLINDS_LEVEL):
             return BidirectionalDevice.create(
