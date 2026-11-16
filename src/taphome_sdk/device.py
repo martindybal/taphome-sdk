@@ -34,6 +34,7 @@ class DeviceState:
     _device_values: dict[ValueType, float]
     operation_mode: OperationMode | None = None
     _changed: Event[Self | None, Self] = field(default_factory=Event[Self | None, Self])
+    _updated_value_types: frozenset[ValueType] = frozenset()
 
     @property
     def changed(self) -> Event[Self | None, Self]:
@@ -47,6 +48,15 @@ class DeviceState:
     ) -> None:
         self._changed = value
 
+    @property
+    def updated_value_types(self) -> frozenset[ValueType]:
+        """Value types the last applied update reported as changed.
+
+        A push delta (``changed_only=True``) counts every value it carries;
+        a full snapshot counts only the values that differ from the cache.
+        """
+        return self._updated_value_types
+
     def __post_init__(self) -> None:
         """Initialize the device state."""
         self.apply_changes(self._device_values, False, True)
@@ -57,12 +67,31 @@ class DeviceState:
         return cls(_device_values=data)
 
     def apply_changes(
-        self, values: dict[ValueType, float], force: bool = False, initial: bool = False
+        self,
+        values: dict[ValueType, float],
+        force: bool = False,
+        initial: bool = False,
+        changed_only: bool = False,
     ) -> None:
-        """Apply changes to the device state based on provided values."""
-        updated = self.should_update(values)
+        """Apply changes to the device state based on provided values.
+
+        ``changed_only`` marks ``values`` as a push delta carrying only values
+        the Core reports as changed: every entry counts as updated even when it
+        equals the cached value (a button can fire the same gesture twice),
+        while a full snapshot counts only values that actually differ.
+        """
+        updated = bool(values) if changed_only else self.should_update(values)
         if initial or updated or force:
             old_state = None if initial else self.clone()
+            self._updated_value_types = (
+                frozenset(values)
+                if changed_only
+                else frozenset(
+                    value_type
+                    for value_type, value in values.items()
+                    if self._device_values.get(value_type) != value
+                )
+            )
             self._device_values.update(values)
             self.device_values_changed(initial)
             self.operation_mode = self.get_device_enum_value(

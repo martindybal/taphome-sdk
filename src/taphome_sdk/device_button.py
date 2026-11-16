@@ -25,10 +25,17 @@ class ButtonState(DeviceState):
 
     def device_values_changed(self, initial: bool) -> None:
         """Update state attributes when device values change."""
-        if not initial:
+        if initial:
+            return
+        if ValueType.BUTTON_PRESSED in self.updated_value_types:
             self.action = self.get_device_enum_value(
                 ButtonAction, ValueType.BUTTON_PRESSED
             )
+        else:
+            # An update without ButtonPressed (ButtonHeldState pushed during a
+            # long press, a poll snapshot repeating the last gesture) is not a
+            # new gesture and must not re-fire the previous action.
+            self.action = ButtonAction.NONE
 
 
 @dataclass(slots=True)

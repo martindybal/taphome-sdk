@@ -6,6 +6,8 @@ import pytest
 
 from taphome_sdk import (
     ApiConnectionType,
+    ButtonAction,
+    ButtonDevice,
     DeviceNotExposedError,
     DeviceTypeError,
     DigitalOutputDevice,
@@ -51,6 +53,35 @@ async def test_webhook_payload_updates_device_state() -> None:
 
     assert device.state.is_on is True
     assert hub.connection_type.value is ApiConnectionType.LOCAL_PUSH
+
+
+async def test_webhook_fires_button_gesture_per_push() -> None:
+    # The webhook is a changed-values delta: pushing the same gesture twice
+    # must fire twice even though the cached value does not change.
+    hub = TapHomeHub("http://hub.local/api", "token", Mock())
+    metadata = make_metadata(2, ValueType.BUTTON_PRESSED.value)
+    device = DeviceFactory.create_device(
+        Mock(), hub.connection_type, metadata, {ValueType.BUTTON_PRESSED: 0.0}
+    )
+    assert isinstance(device, ButtonDevice)
+    hub.devices[2] = device
+    hub.connection_state.value = HubConnectionState.CONNECTED
+    clicks: list[ButtonAction] = []
+    device.clicked += clicks.append
+
+    payload = {
+        "devices": [
+            {
+                "deviceId": 2,
+                "values": [{"valueTypeId": ValueType.BUTTON_PRESSED.value, "value": 2}],
+            }
+        ],
+        "timestamp": 2,
+    }
+    await hub.async_handle_webhook(payload)
+    await hub.async_handle_webhook(payload | {"timestamp": 3})
+
+    assert clicks == [ButtonAction.LONG_PRESS, ButtonAction.LONG_PRESS]
 
 
 def test_get_typed_device_checks_type() -> None:

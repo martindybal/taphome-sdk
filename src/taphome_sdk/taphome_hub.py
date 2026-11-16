@@ -220,7 +220,7 @@ class TapHomeHub:
         self.connection_type.value = ApiConnectionType.LOCAL_PUSH
         if self.connection_state.value == HubConnectionState.CONNECTED:
             changed_values = DevicesValuesResponse.from_dict(payload)
-            self._update_devices_values(changed_values.devices)
+            self._update_devices_values(changed_values.devices, changed_only=True)
         else:
             await self._async_update_all_devices_values()
 
@@ -279,11 +279,20 @@ class TapHomeHub:
             "Please check your connection and try again."
         )
 
-    def _update_devices_values(self, values: dict[int, DeviceValues]) -> None:
+    def _update_devices_values(
+        self, values: dict[int, DeviceValues], changed_only: bool = False
+    ) -> None:
+        """Apply incoming values; ``changed_only`` marks a push delta.
+
+        A webhook carries only the values the Core reports as changed, while a
+        poll returns full snapshots — see ``DeviceState.apply_changes``.
+        """
         for device_id, device_values in values.items():
             device = self.devices.get(device_id)
             if device is not None and device_values is not None:
-                device.state.apply_changes(device_values.values)
+                device.state.apply_changes(
+                    device_values.values, changed_only=changed_only
+                )
 
         self.last_update_success_time.value = datetime.now(UTC)
         self._track_new_device_ids(values.keys())
