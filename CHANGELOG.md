@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.2.0
+
+- Fixed `ButtonDevice.clicked` firing 2–3× for a single gesture: webhook
+  pushes that carry only other values (`ButtonHeldState` while a long press
+  is held) and poll snapshots repeating the stale `ButtonPressed` value no
+  longer re-fire the last action
+  ([taphome-homeassistant#211](https://github.com/martindybal/taphome-homeassistant/issues/211),
+  reported with a field-tested patch by `pepies`).
+- `DeviceState.apply_changes` takes `changed_only=`: a webhook delta counts
+  every carried value as updated — so the same gesture pushed twice fires
+  twice — while full snapshots count only values that actually differ.
+- New `DeviceState.updated_value_types`: the value types the last applied
+  update reported as changed.
+
 ## 1.1.0
 
 - `ValueChangeFailedException` is exported from the package root, inherits
